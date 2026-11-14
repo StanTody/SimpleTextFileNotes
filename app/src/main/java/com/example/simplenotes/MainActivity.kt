@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
@@ -28,7 +29,8 @@ data class NoteFile(
     val fileName: String,
     val title: String,
     val content: String,
-    val uri: Uri
+    val uri: Uri,
+    val lastModified: Long
 )
 
 class MainActivity : ComponentActivity() {
@@ -75,12 +77,14 @@ fun NotesApp() {
                     context.contentResolver.openInputStream(file.uri)?.use { stream ->
                         val text = InputStreamReader(stream).readText()
                         val firstLine = text.lineSequence().firstOrNull()?.trim() ?: file.name ?: ""
-                        loadedNotes.add(NoteFile(file.name ?: "", firstLine, text, file.uri))
+                        val lastModified = file.lastModified()
+                        loadedNotes.add(NoteFile(file.name ?: "", firstLine, text, file.uri, lastModified))
                     }
                 } catch (_: Exception) {}
             }
         }
-        notesList = loadedNotes
+        // Сортираме бележките: най-новите (по време на промяна) отиват най-отгоре
+        notesList = loadedNotes.sortedByDescending { it.lastModified }
     }
 
     val folderPicker = rememberLauncherForActivityResult(
@@ -214,7 +218,15 @@ fun NotesApp() {
                             onValueChange = { searchQuery = it },
                             modifier = Modifier.weight(1f),
                             placeholder = { Text("Търсене...") },
-                            singleLine = true
+                            singleLine = true,
+                            // Добавяме бутон за изчистване от лявата страна (leadingIcon), когато има текст
+                            leadingIcon = if (searchQuery.isNotEmpty()) {
+                                {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Изчисти търсенето")
+                                    }
+                                }
+                            } else null
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         FloatingActionButton(
@@ -250,12 +262,12 @@ fun NotesApp() {
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                                .padding(horizontal = 12.dp, vertical = 2.dp) // Намалени вертикални отстояния наполовина
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(12.dp),
+                                    .padding(horizontal = 12.dp, vertical = 6.dp), // По-компактен вътрешен padding
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -264,18 +276,19 @@ fun NotesApp() {
                                     style = MaterialTheme.typography.titleMedium,
                                     modifier = Modifier.weight(1f)
                                 )
+                                // Разменени бутони: Изтриване отляво, Отваряне отдясно
+                                IconButton(onClick = { deleteNote(note) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Изтрий")
+                                }
                                 Button(
                                     onClick = {
                                         currentEditingNote = note
                                         editorText = note.content
                                         isEditing = true
                                     },
-                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                    modifier = Modifier.padding(start = 4.dp)
                                 ) {
                                     Text("Отвори")
-                                }
-                                IconButton(onClick = { deleteNote(note) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Изтрий")
                                 }
                             }
                         }
