@@ -12,6 +12,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -43,7 +44,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             val darkTheme = isSystemInDarkTheme()
             MaterialTheme(
-                colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()
+                colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme(),
+                shapes = MaterialTheme.shapes.copy(
+                    // Задаваме по-малко заобляне (10dp) за бутоните и елементите по подразбиране
+                    small = RoundedCornerShape(10.dp),
+                    medium = RoundedCornerShape(10.dp),
+                    large = RoundedCornerShape(10.dp)
+                )
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -71,6 +78,7 @@ fun NotesApp() {
         )
     }
 
+    // Кеширан списък с метаданни в паметта (зарежда се веднъж или при промяна)
     var notesList by remember { mutableStateOf<List<NoteFile>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
@@ -80,6 +88,10 @@ fun NotesApp() {
     var isEditing by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
 
+    // Състояние за диалоговия прозорец за потвърждение при изтриване
+    var noteToDelete by remember { mutableStateOf<NoteFile?>(null) }
+
+    // Зареждаме метаданните от диска и ги кешираме в notesList
     fun loadNotes() {
         val folderUri = selectedFolderUri ?: return
         val folder = DocumentFile.fromTreeUri(context, folderUri) ?: return
@@ -97,6 +109,7 @@ fun NotesApp() {
         notesList = loadedNotes.sortedByDescending { it.lastModified }
     }
 
+    // Зареждаме веднъж при стартиране, ако имаме запазена папка
     LaunchedEffect(selectedFolderUri) {
         if (selectedFolderUri != null) {
             loadNotes()
@@ -152,20 +165,21 @@ fun NotesApp() {
             isEditing = false
             currentEditingNote = null
             editorText = ""
-            loadNotes()
+            loadNotes() // Обновяваме кеша
         } catch (e: Exception) {
             Toast.makeText(context, "Error saving note: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    fun deleteNote(note: NoteFile) {
+    fun confirmAndDeleteNote(note: NoteFile) {
         val folderUri = selectedFolderUri ?: return
         val folder = DocumentFile.fromTreeUri(context, folderUri) ?: return
         val file = folder.findFile(note.fileName)
         file?.delete()
-        loadNotes()
+        loadNotes() // Обновяваме кеша
     }
 
+    // Лениво търсене през кеширания списък и четене на съдържание само при нужда
     val filteredNotes = remember(notesList, appliedQuery) {
         if (appliedQuery.isBlank()) {
             notesList
@@ -186,6 +200,30 @@ fun NotesApp() {
                 }
             }
         }
+    }
+
+    // Диалогов прозорец за потвърждение преди изтриване
+    if (noteToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { noteToDelete = null },
+            title = { Text("Delete Note") },
+            text = { Text("Are you sure you want to delete \"${noteToDelete?.title}\"?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        noteToDelete?.let { confirmAndDeleteNote(it) }
+                        noteToDelete = null
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { noteToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -218,7 +256,6 @@ fun NotesApp() {
                     .padding(12.dp)
             ) {
                 if (isEditing) {
-                    // Използваме стабилен Modifier.fillMaxHeight(0.65f) вместо BoxWithConstraints
                     OutlinedTextField(
                         value = editorText,
                         onValueChange = { editorText = it },
@@ -258,7 +295,7 @@ fun NotesApp() {
                             keyboardActions = KeyboardActions(
                                 onSearch = {
                                     appliedQuery = searchQuery
-                                    focusManager.clearFocus() // Стабилен начин за скриване на фокуса/клавиатурата
+                                    focusManager.clearFocus()
                                 }
                             ),
                             leadingIcon = if (searchQuery.isNotEmpty()) {
@@ -303,15 +340,16 @@ fun NotesApp() {
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     items(filteredNotes) { note ->
-                        Card(
+                        // Редовете вече са с фонов цвят на прозореца (без фон на карта) и с разделителна линия
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 2.dp)
+                                .padding(horizontal = 12.dp)
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    .padding(vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -320,7 +358,7 @@ fun NotesApp() {
                                     style = MaterialTheme.typography.titleMedium,
                                     modifier = Modifier.weight(1f)
                                 )
-                                IconButton(onClick = { deleteNote(note) }) {
+                                IconButton(onClick = { noteToDelete = note }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Delete")
                                 }
                                 Button(
@@ -340,6 +378,11 @@ fun NotesApp() {
                                     Text("Open")
                                 }
                             }
+                            // Тънка разделителна линия с цвета на бутона (Primary цвят от темата)
+                            HorizontalDivider(
+                                thickness = 1.dp,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                            )
                         }
                     }
                 }
