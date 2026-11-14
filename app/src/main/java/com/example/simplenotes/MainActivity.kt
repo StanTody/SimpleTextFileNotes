@@ -1,5 +1,6 @@
 package com.example.simplenotes
 
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -56,7 +57,16 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun NotesApp() {
     val context = LocalContext.current
-    var selectedFolderUri by remember { mutableStateOf<Uri?>(null) }
+    val sharedPreferences = remember {
+        context.getSharedPreferences("SimpleNotesPrefs", Context.MODE_PRIVATE)
+    }
+
+    var selectedFolderUri by remember {
+        mutableStateOf(
+            sharedPreferences.getString("saved_folder_uri", null)?.let { Uri.parse(it) }
+        )
+    }
+
     var notesList by remember { mutableStateOf<List<NoteFile>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
     
@@ -83,8 +93,14 @@ fun NotesApp() {
                 } catch (_: Exception) {}
             }
         }
-        // Сортираме бележките: най-новите (по време на промяна) отиват най-отгоре
         notesList = loadedNotes.sortedByDescending { it.lastModified }
+    }
+
+    // Автоматично зареждане на бележките при стартиране, ако имаме записана папка
+    LaunchedEffect(selectedFolderUri) {
+        if (selectedFolderUri != null) {
+            loadNotes()
+        }
     }
 
     val folderPicker = rememberLauncherForActivityResult(
@@ -97,6 +113,8 @@ fun NotesApp() {
                         android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
             selectedFolderUri = uri
+            // Запазваме избора на папка в SharedPreferences
+            sharedPreferences.edit().putString("saved_folder_uri", uri.toString()).apply()
             loadNotes()
         }
     }
@@ -154,141 +172,144 @@ fun NotesApp() {
                 it.content.contains(searchQuery, ignoreCase = true)
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Бележки") },
-                actions = {
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Меню")
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Избери папка") },
-                            onClick = {
-                                menuExpanded = false
-                                folderPicker.launch(null)
-                            }
-                        )
-                    }
-                }
-            )
-        },
-        bottomBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp)
-            ) {
-                if (isEditing) {
-                    OutlinedTextField(
-                        value = editorText,
-                        onValueChange = { editorText = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp),
-                        placeholder = { Text("Напишете бележка... Първият ред става име на файла.") }
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        OutlinedButton(
-                            onClick = { isEditing = false; currentEditingNote = null },
-                            modifier = Modifier.padding(end = 8.dp)
+    // Използваме BoxWithConstraints, за да можем да засечем точната височина на екрана и да я умножим по 0.65 (65%)
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val screenHeight = maxHeight
+
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Бележки") },
+                    actions = {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Меню")
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
                         ) {
-                            Text("Отказ")
-                        }
-                        Button(onClick = { saveNote() }) {
-                            Text("Запази")
-                        }
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            modifier = Modifier.weight(1f),
-                            placeholder = { Text("Търсене...") },
-                            singleLine = true,
-                            // Добавяме бутон за изчистване от лявата страна (leadingIcon), когато има текст
-                            leadingIcon = if (searchQuery.isNotEmpty()) {
-                                {
-                                    IconButton(onClick = { searchQuery = "" }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Изчисти търсенето")
-                                    }
+                            DropdownMenuItem(
+                                text = { Text("Избери папка") },
+                                onClick = {
+                                    menuExpanded = false
+                                    folderPicker.launch(null)
                                 }
-                            } else null
+                            )
+                        }
+                    }
+                )
+            },
+            bottomBar = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp)
+                ) {
+                    if (isEditing) {
+                        OutlinedTextField(
+                            value = editorText,
+                            onValueChange = { editorText = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(screenHeight * 0.65f), // Задаваме точно 65% от височината на екрана
+                            placeholder = { Text("Напишете бележка... Първият ред става име на файла.") }
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        FloatingActionButton(
-                            onClick = {
-                                currentEditingNote = null
-                                editorText = ""
-                                isEditing = true
-                            }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.End
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = "Нова бележка")
+                            OutlinedButton(
+                                onClick = { isEditing = false; currentEditingNote = null },
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Text("Отказ")
+                            }
+                            Button(onClick = { saveNote() }) {
+                                Text("Запази")
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text("Търсене...") },
+                                singleLine = true,
+                                leadingIcon = if (searchQuery.isNotEmpty()) {
+                                    {
+                                        IconButton(onClick = { searchQuery = "" }) {
+                                            Icon(Icons.Default.Clear, contentDescription = "Изчисти търсенето")
+                                        }
+                                    }
+                                } else null
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            FloatingActionButton(
+                                onClick = {
+                                    currentEditingNote = null
+                                    editorText = ""
+                                    isEditing = true
+                                }
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = "Нова бележка")
+                            }
                         }
                     }
                 }
             }
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .padding(innerPadding)
-                .fillMaxSize()
-        ) {
-            if (selectedFolderUri == null) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Моля, изберете папка от менюто горе вдясно.")
-                }
-            } else if (filteredNotes.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Няма намерени бележки.")
-                }
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(filteredNotes) { note ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 2.dp) // Намалени вертикални отстояния наполовина
-                        ) {
-                            Row(
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .padding(innerPadding)
+                    .fillMaxSize()
+            ) {
+                if (selectedFolderUri == null) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Моля, изберете папка от менюто горе вдясно.")
+                    }
+                } else if (filteredNotes.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Няма намерени бележки.")
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(filteredNotes) { note ->
+                            Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 6.dp), // По-компактен вътрешен padding
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                    .padding(horizontal = 12.dp, vertical = 2.dp)
                             ) {
-                                Text(
-                                    text = note.title,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                // Разменени бутони: Изтриване отляво, Отваряне отдясно
-                                IconButton(onClick = { deleteNote(note) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Изтрий")
-                                }
-                                Button(
-                                    onClick = {
-                                        currentEditingNote = note
-                                        editorText = note.content
-                                        isEditing = true
-                                    },
-                                    modifier = Modifier.padding(start = 4.dp)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text("Отвори")
+                                    Text(
+                                        text = note.title,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(onClick = { deleteNote(note) }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Изтрий")
+                                    }
+                                    Button(
+                                        onClick = {
+                                            currentEditingNote = note
+                                            editorText = note.content
+                                            isEditing = true
+                                        },
+                                        modifier = Modifier.padding(start = 4.dp)
+                                    ) {
+                                        Text("Отвори")
+                                    }
                                 }
                             }
                         }
