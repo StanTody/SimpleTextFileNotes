@@ -24,7 +24,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun NotesApp() {
     val context = LocalContext.current
-    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val sharedPreferences = remember {
         context.getSharedPreferences("SimpleNotesPrefs", Context.MODE_PRIVATE)
     }
@@ -72,7 +72,7 @@ fun NotesApp() {
     }
 
     var notesList by remember { mutableStateOf<List<NoteFile>>(emptyList()) }
-    var searchQuery by remember { mutableStateOf("")}
+    var searchQuery by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
     
     var currentEditingNote by remember { mutableStateOf<NoteFile?>(null) }
@@ -80,7 +80,6 @@ fun NotesApp() {
     var isEditing by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
 
-    // Load only metadata (names, URIs, and last modified timestamps) without reading file contents
     fun loadNotes() {
         val folderUri = selectedFolderUri ?: return
         val folder = DocumentFile.fromTreeUri(context, folderUri) ?: return
@@ -95,7 +94,6 @@ fun NotesApp() {
                 loadedNotes.add(NoteFile(fileName, title, file.uri, lastModified))
             }
         }
-        // Sort notes by last modified time descending (newest first)
         notesList = loadedNotes.sortedByDescending { it.lastModified }
     }
 
@@ -168,18 +166,15 @@ fun NotesApp() {
         loadNotes()
     }
 
-    // Lazy filtering triggered only when appliedQuery changes (on Enter/Search action)
     val filteredNotes = remember(notesList, appliedQuery) {
         if (appliedQuery.isBlank()) {
             notesList
         } else {
             val query = appliedQuery.trim()
             notesList.filter { note ->
-                // 1. Check title instantly
                 if (note.title.contains(query, ignoreCase = true)) {
                     true
                 } else {
-                    // 2. If title does not match, lazily open the file and check content
                     try {
                         context.contentResolver.openInputStream(note.uri)?.use { stream ->
                             val text = InputStreamReader(stream).readText()
@@ -193,160 +188,156 @@ fun NotesApp() {
         }
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val screenHeight = maxHeight
-
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Notes") },
-                    actions = {
-                        IconButton(onClick = { menuExpanded = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "Menu")
-                        }
-                        DropdownMenu(
-                            expanded = menuExpanded,
-                            onDismissRequest = { menuExpanded = false }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Notes") },
+                actions = {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Select Folder") },
+                            onClick = {
+                                menuExpanded = false
+                                folderPicker.launch(null)
+                            }
+                        )
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+            ) {
+                if (isEditing) {
+                    // Използваме стабилен Modifier.fillMaxHeight(0.65f) вместо BoxWithConstraints
+                    OutlinedTextField(
+                        value = editorText,
+                        onValueChange = { editorText = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.65f),
+                        placeholder = { Text("Write your note... First line becomes the filename.") }
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        OutlinedButton(
+                            onClick = { isEditing = false; currentEditingNote = null },
+                            modifier = Modifier.padding(end = 8.dp)
                         ) {
-                            DropdownMenuItem(
-                                text = { Text("Select Folder") },
-                                onClick = {
-                                    menuExpanded = false
-                                    folderPicker.launch(null)
-                                }
-                            )
+                            Text("Cancel")
+                        }
+                        Button(onClick = { saveNote() }) {
+                            Text("Save")
                         }
                     }
-                )
-            },
-            bottomBar = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp)
-                ) {
-                    if (isEditing) {
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         OutlinedTextField(
-                            value = editorText,
-                            onValueChange = { editorText = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(screenHeight * 0.65f), // 65% of screen height
-                            placeholder = { Text("Write your note... First line becomes the filename.") }
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 8.dp),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            OutlinedButton(
-                                onClick = { isEditing = false; currentEditingNote = null },
-                                modifier = Modifier.padding(end = 8.dp)
-                            ) {
-                                Text("Cancel")
-                            }
-                            Button(onClick = { saveNote() }) {
-                                Text("Save")
-                            }
-                        }
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedTextField(
-                                value = searchQuery,
-                                onValueChange = { searchQuery = it },
-                                modifier = Modifier.weight(1f),
-                                placeholder = { Text("Search...") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                                keyboardActions = KeyboardActions(
-                                    onSearch = {
-                                        appliedQuery = searchQuery
-                                        keyboardController?.hide()
-                                    }
-                                ),
-                                leadingIcon = if (searchQuery.isNotEmpty()) {
-                                    {
-                                        IconButton(onClick = {
-                                            searchQuery = ""
-                                            appliedQuery = ""
-                                        }) {
-                                            Icon(Icons.Default.Clear, contentDescription = "Clear search")
-                                        }
-                                    }
-                                } else null
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            FloatingActionButton(
-                                onClick = {
-                                    currentEditingNote = null
-                                    editorText = ""
-                                    isEditing = true
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text("Search...") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(
+                                onSearch = {
+                                    appliedQuery = searchQuery
+                                    focusManager.clearFocus() // Стабилен начин за скриване на фокуса/клавиатурата
                                 }
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = "New Note")
+                            ),
+                            leadingIcon = if (searchQuery.isNotEmpty()) {
+                                {
+                                    IconButton(onClick = {
+                                        searchQuery = ""
+                                        appliedQuery = ""
+                                    }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Clear search")
+                                    }
+                                }
+                            } else null
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        FloatingActionButton(
+                            onClick = {
+                                currentEditingNote = null
+                                editorText = ""
+                                isEditing = true
                             }
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "New Note")
                         }
                     }
                 }
             }
-        ) { innerPadding ->
-            Column(
-                modifier = Modifier
-                    .padding(innerPadding)
-                    .fillMaxSize()
-            ) {
-                if (selectedFolderUri == null) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Please select a folder from the top right menu.")
-                    }
-                } else if (filteredNotes.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No notes found.")
-                    }
-                } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(filteredNotes) { note ->
-                            Card(
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize()
+        ) {
+            if (selectedFolderUri == null) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Please select a folder from the top right menu.")
+                }
+            } else if (filteredNotes.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No notes found.")
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(filteredNotes) { note ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 2.dp)
+                        ) {
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = note.title,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    IconButton(onClick = { deleteNote(note) }) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Delete")
-                                    }
-                                    Button(
-                                        onClick = {
-                                            // Read full file content only when clicking "Open"
-                                            val content = try {
-                                                context.contentResolver.openInputStream(note.uri)?.use { stream ->
-                                                    InputStreamReader(stream).readText()
-                                                } ?: ""
-                                            } catch (_: Exception) { "" }
+                                Text(
+                                    text = note.title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(onClick = { deleteNote(note) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                }
+                                Button(
+                                    onClick = {
+                                        val content = try {
+                                            context.contentResolver.openInputStream(note.uri)?.use { stream ->
+                                                InputStreamReader(stream).readText()
+                                            } ?: ""
+                                        } catch (_: Exception) { "" }
 
-                                            currentEditingNote = note
-                                            editorText = content
-                                            isEditing = true
-                                        },
-                                        modifier = Modifier.padding(start = 4.dp)
-                                    ) {
-                                        Text("Open")
-                                    }
+                                        currentEditingNote = note
+                                        editorText = content
+                                        isEditing = true
+                                    },
+                                    modifier = Modifier.padding(start = 4.dp)
+                                ) {
+                                    Text("Open")
                                 }
                             }
                         }
