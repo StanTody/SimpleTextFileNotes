@@ -379,7 +379,8 @@ fun NotesApp() {
                                 }
                             }
                             // Тънка разделителна линия с цвета на бутона (Primary цвят от темата)
-                            HorizontalDivider(
+                            // Използваме стабилния компонент Divider за съвместимост с Material3 версията
+                            Divider(
                                 thickness = 1.dp,
                                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                             )
