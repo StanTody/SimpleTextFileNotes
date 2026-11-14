@@ -29,7 +29,6 @@ import java.io.InputStreamReader
 data class NoteFile(
     val fileName: String,
     val title: String,
-    val content: String,
     val uri: Uri,
     val lastModified: Long
 )
@@ -75,6 +74,7 @@ fun NotesApp() {
     var isEditing by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
 
+    // Оптимизирано зареждане: вземаме само метаданните на файловете без да четем съдържанието им!
     fun loadNotes() {
         val folderUri = selectedFolderUri ?: return
         val folder = DocumentFile.fromTreeUri(context, folderUri) ?: return
@@ -83,20 +83,17 @@ fun NotesApp() {
 
         for (file in files) {
             if (file.isFile && file.name?.endsWith(".txt") == true) {
-                try {
-                    context.contentResolver.openInputStream(file.uri)?.use { stream ->
-                        val text = InputStreamReader(stream).readText()
-                        val firstLine = text.lineSequence().firstOrNull()?.trim() ?: file.name ?: ""
-                        val lastModified = file.lastModified()
-                        loadedNotes.add(NoteFile(file.name ?: "", firstLine, text, file.uri, lastModified))
-                    }
-                } catch (_: Exception) {}
+                val fileName = file.name ?: continue
+                // Извличаме четимо заглавие от името на файла
+                val title = fileName.removeSuffix(".txt").replace("_", " ")
+                val lastModified = file.lastModified()
+                loadedNotes.add(NoteFile(fileName, title, file.uri, lastModified))
             }
         }
+        // Сортираме списъка по време на последна промяна (най-новите най-отгоре)
         notesList = loadedNotes.sortedByDescending { it.lastModified }
     }
 
-    // Автоматично зареждане на бележките при стартиране, ако имаме записана папка
     LaunchedEffect(selectedFolderUri) {
         if (selectedFolderUri != null) {
             loadNotes()
@@ -113,7 +110,6 @@ fun NotesApp() {
                         android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
             selectedFolderUri = uri
-            // Запазваме избора на папка в SharedPreferences
             sharedPreferences.edit().putString("saved_folder_uri", uri.toString()).apply()
             loadNotes()
         }
@@ -167,12 +163,31 @@ fun NotesApp() {
         loadNotes()
     }
 
-    val filteredNotes = notesList.filter {
-        it.title.contains(searchQuery, ignoreCase = true) ||
-                it.content.contains(searchQuery, ignoreCase = true)
+    // Лениво филтриране: проверява заглавието, а при търсене в съдържанието чете файл по файл само при нужда
+    val filteredNotes = remember(notesList, searchQuery) {
+        if (searchQuery.isBlank()) {
+            notesList
+        } else {
+            val query = searchQuery.trim()
+            notesList.filter { note ->
+                // 1. Проверяваме заглавието (мигновено)
+                if (note.title.contains(query, ignoreCase = true)) {
+                    true
+                } else {
+                    // 2. Ако заглавието не съвпада, отваряме файла лениво и проверяваме съдържанието му
+                    try {
+                        context.contentResolver.openInputStream(note.uri)?.use { stream ->
+                            val text = InputStreamReader(stream).readText()
+                            text.contains(query, ignoreCase = true)
+                        } ?: false
+                    } catch (_: Exception) {
+                        false
+                    }
+                }
+            }
+        }
     }
 
-    // Използваме BoxWithConstraints, за да можем да засечем точната височина на екрана и да я умножим по 0.65 (65%)
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val screenHeight = maxHeight
 
@@ -211,7 +226,7 @@ fun NotesApp() {
                             onValueChange = { editorText = it },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(screenHeight * 0.65f), // Задаваме точно 65% от височината на екрана
+                                .height(screenHeight * 0.65f),
                             placeholder = { Text("Напишете бележка... Първият ред става име на файла.") }
                         )
                         Row(
@@ -302,8 +317,15 @@ fun NotesApp() {
                                     }
                                     Button(
                                         onClick = {
+                                            // Четем пълното съдържание на файла само при клик върху "Отвори"
+                                            val content = try {
+                                                context.contentResolver.openInputStream(note.uri)?.use { stream ->
+                                                    InputStreamReader(stream).readText()
+                                                } ?: ""
+                                            } catch (_: Exception) { "" }
+
                                             currentEditingNote = note
-                                            editorText = note.content
+                                            editorText = content
                                             isEditing = true
                                         },
                                         modifier = Modifier.padding(start = 4.dp)
